@@ -3,6 +3,7 @@
 import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.auth.models import Group
@@ -177,7 +178,7 @@ def _build_manager():
     )
     auth = FakeAuth()
     config_entries = SimpleNamespace(async_update_entry=lambda *_args, **_kwargs: None)
-    hass = SimpleNamespace(auth=auth, config_entries=config_entries)
+    hass = SimpleNamespace(auth=auth, config_entries=config_entries, data={})
     store = FakeStore()
     manager = object.__new__(TemporaryGuestManager)
     manager.hass = hass
@@ -312,3 +313,58 @@ def test_ui_policy_is_limited_to_the_managed_user() -> None:
         "managed": False,
         "dashboard_path": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_initialize_revokes_preexisting_logbook_streams(monkeypatch) -> None:
+    """Loading protection closes old guest sessions, even with unchanged ACLs."""
+    manager, user, auth, store, token = _build_manager()
+    store.saved = deepcopy(manager._state)
+    install = Mock()
+    monkeypatch.setattr(
+        "custom_components.temporary_guest.manager.async_install_logbook_guard", install
+    )
+    monkeypatch.setattr(
+        "custom_components.temporary_guest.manager.async_install_api_guard", Mock()
+    )
+    monkeypatch.setattr(manager, "_async_stored_password_matches", AsyncMock(return_value=True))
+    monkeypatch.setattr(manager, "async_reschedule", Mock())
+    await manager.async_initialize()
+    install.assert_called_once_with(manager.hass, user.id)
+    assert auth.removed_tokens == [token]
+    assert auth._store._store.saved
+
+
+@pytest.mark.asyncio
+async def test_initialize_disables_account_when_logbook_guard_fails(monkeypatch) -> None:
+    """An incompatible HA backend must not leave the old account usable."""
+    manager, user, auth, store, token = _build_manager()
+    store.saved = deepcopy(manager._state)
+    monkeypatch.setattr(
+        "custom_components.temporary_guest.manager.async_install_logbook_guard",
+        Mock(side_effect=RuntimeError("incompatible backend")),
+    )
+    with pytest.raises(ConfigEntryError, match="API access"):
+        await manager.async_initialize()
+    assert user.is_active is False
+    assert auth.removed_tokens == [token]
+    assert auth._store._store.saved
+
+
+@pytest.mark.asyncio
+async def test_initialize_disables_account_when_api_guard_fails(monkeypatch) -> None:
+    """A partially installed HTTP/WS guard cannot leave the managed account active."""
+    manager, user, auth, store, token = _build_manager()
+    store.saved = deepcopy(manager._state)
+    monkeypatch.setattr(
+        "custom_components.temporary_guest.manager.async_install_logbook_guard", Mock()
+    )
+    monkeypatch.setattr(
+        "custom_components.temporary_guest.manager.async_install_api_guard",
+        Mock(side_effect=RuntimeError("incompatible router")),
+    )
+    with pytest.raises(ConfigEntryError, match="API access"):
+        await manager.async_initialize()
+    assert user.is_active is False
+    assert auth.removed_tokens == [token]
+    assert auth._store._store.saved

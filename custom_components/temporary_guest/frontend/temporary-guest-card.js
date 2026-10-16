@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.3.1";
 const UI_POLICY_TYPE = "temporary_guest/ui_policy";
 const DASHBOARD_GUARD_KEY = "__temporaryGuestDashboardGuard";
 const DASHBOARD_PATH_PATTERN = /^\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)*$/;

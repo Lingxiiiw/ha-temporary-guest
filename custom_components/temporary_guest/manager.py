@@ -16,6 +16,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .api_guard import async_install_api_guard
 from .const import (
     CONF_AUTO_ROTATE,
     CONF_CONTROL_ENTITIES,
@@ -37,6 +38,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .dashboard import normalize_dashboard_path
+from .logbook_guard import async_install_logbook_guard
 from .password import generate_password
 from .permissions import (
     async_ensure_restricted_group,
@@ -140,9 +142,27 @@ class TemporaryGuestManager:
         loaded = await self._store.async_load()
         self._state = dict(loaded or {})
 
+        user = None
         if self._state.get("user_id"):
             user = await self._async_require_user()
             self._validate_managed_user(user)
+
+        try:
+            async_install_logbook_guard(self.hass, user.id if user else None)
+            async_install_api_guard(self.hass)
+            if user is not None:
+                # Also terminate streams opened before this guard was installed
+                # (for example when upgrading/reloading without a full restart).
+                self._revoke_all_sessions(user)
+                await async_persist_auth_store(self.hass.auth)
+        except Exception as err:
+            if user is not None:
+                await self._async_fail_closed(user)
+            raise ConfigEntryError(
+                "Unable to protect Temporary Guest API access; account disabled"
+            ) from err
+
+        if user is not None:
             await self.async_sync_permissions()
             if not self._state.get("password"):
                 await self.async_rotate()

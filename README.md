@@ -8,6 +8,8 @@
 - Owner 可启用或停用临时用户，也可以关闭自动刷新；
 - Owner 可在集成选项中分别选择“仅可查看”和“可查看并控制”的实体；
 - 未选中的实体由 Home Assistant 服务端拒绝，两个清单都留空时不允许访问任何实体；
+- 受管访客不能读取活动日志（Logbook）的 HTTP、WebSocket 历史查询或实时订阅，防止日志携带无关实体和用户信息；
+- 实体、设备和区域注册表按白名单裁剪；服务端同时限制任意模板、关联搜索、统计和其他仪表盘配置等旁路；
 - `mzuser` 打开其他 Lovelace 仪表盘时，会被浏览器自动带回指定的访客仪表盘；
 - 换密或停用时撤销该临时用户的全部浏览器、App 和长期访问令牌会话；
 - 不需要 Shell、SSH、外部服务器或 Owner 长期访问令牌。
@@ -28,7 +30,28 @@ Home Assistant 只保存密码哈希，无法读取现有密码。为了满足�
 
 本集成会把 `mzuser` 从 HA 默认的普通用户组移入专用限制组，只给所选实体授予 `read` 或 `read + control`。因此未选中实体的状态和控制请求会在服务端被拒绝。修改清单时会先注销该用户的全部会话，再应用新权限。
 
-Dashboard 守卫会根据当前 Home Assistant 登录会话识别 `mzuser`，并把它从其他 Lovelace 仪表盘带回指定路径。Owner、管理员和其他用户不受影响。它与“按用户隐藏页面”、子视图和 Kiosk Mode 一样，仍然只是浏览器界面约束，不是页面级访问控制：懂技术的用户可以关闭 JavaScript、直接调用 API/WebSocket，或使用缓存页面绕过。真正的安全边界仍是服务端实体白名单；不要在访客可加载的仪表盘配置中写入敏感文字或秘密。
+HA 2026.10.1 的活动日志接口没有按登录用户的实体权限过滤。`entity_ids` 等参数只是查询条件，且白名单实体的日志也可能附带其他实体、自动化、用户和自由文本。因此从 **0.3.1** 起，对受管访客整体禁止读取 Logbook，包括白名单实体的日志；Owner、管理员及其他普通用户沿用 HA 原来的行为。覆盖 `logbook/get_events`、`logbook/event_stream`、`/api/logbook` 及带日期路径。正常的访客日志请求分别返回 WebSocket `unauthorized` 或 HTTP `401`；HA 原本会直接返回空结果的查询或无效参数也可能保持其原有空结果/错误，但不会进入日志数据处理。
+
+这个检查在服务端执行，不依赖前端跳转，也不能用 `entity_ids`、`device_ids` 或 `context_id` 绕过。集成现在依赖 HA 内置 `logbook`（及其 `recorder`、`frontend` 依赖），并在账户初始化时检查内部接口兼容性；检查失败时停用已有受管账号。初始化会注销旧访客会话，让旧实时订阅关闭。当前进程内卸载配置项不会撤掉日志保护。
+
+Dashboard 自动跳回和 Kiosk Mode 仍只是浏览器界面约束。0.3.1 另在服务端限制 `lovelace/config`：受管访客只能请求配置指定的 Dashboard，其他 Dashboard 的配置请求被拒绝，面板清单也只保留该 Dashboard。这不等于拦截所有页面或静态文件；同一访客 Dashboard 的所有视图配置仍可读取，不要把敏感文字、令牌或秘密放在其中。
+
+### 0.3.1 的其他接口限制
+
+| 接口 | 受管访客的行为 |
+| --- | --- |
+| 实体注册表 list/display/get/get_entries | 只保留可读实体，移除硬件唯一标识、配置项、标签和任意 options 等额外字段 |
+| 设备、区域、楼层清单 | 仅返回可读实体关联的项目及必要显示字段；设备连接、序列号、关联实体等额外信息不返回 |
+| 人员、标签清单 | 返回空清单 |
+| 任意模板、关联搜索、统计/能源、全局媒体库 | 拒绝访问；统计图卡、模板卡和媒体库浏览会受影响 |
+| 注册表等原始事件订阅 | 拒绝；保留 HA 自带权限过滤的 `state_changed` 和实体订阅 |
+| 全局配置、服务、面板清单 | 配置移除真实坐标、内外网地址和额外集成信息；WS 服务描述仅保留可控制实体所属域，面板只留访客 Dashboard；HTTP 全局组件/事件/服务清单返回空列表 |
+| 摄像头图像/流、image 图片代理、播放器图片及对应 WS 请求 | 检查请求实体的 read 权限，未授权时在取图前拒绝 |
+| 服务调用 | 要求显式指定 control 白名单实体；拒绝全局、区域/设备/标签目标、跨域目标和任意服务返回数据；HTTP 返回的间接变化状态按 read 权限过滤 |
+
+实体状态、普通历史记录及日历原本已有 HA 实体权限过滤，本版保留其原有行为。访客卡片的服务动作应使用明确的 `entity_id`，不要使用 `all`、区域或设备目标。控制脚本/场景仍可触发其内部动作，Owner 授权这些实体前应确认整个动作范围。
+
+这些防护针对已核验的 HA 2026.10.1 接口，不能保证任意第三方集成或公开静态资源实现用户隔离。实体白名单里的实体自身属性仍按 HA 规则提供。没有身份、仅凭已泄露资源令牌访问的链接不属于此用户身份检查，修复不会追回此前已泄露的数据。详见 [安全核验记录](SECURITY_REVIEW.md)。
 
 ## 通过 HACS 安装
 
@@ -46,7 +69,7 @@ https://github.com/<你的用户名>/ha-temporary-guest
 "documentation": "https://github.com/OWNER/ha-temporary-guest"
 ```
 
-替换为实际仓库地址，并创建一个版本标签，例如 `v0.3.0`。
+替换为实际仓库地址，并创建一个版本标签，例如 `v0.3.1`。
 
 ### 2. 导入 HACS
 
@@ -75,7 +98,7 @@ https://github.com/<你的用户名>/ha-temporary-guest
 打开 **设置 → 仪表盘 → 右上角菜单 → 资源 → 添加资源**：
 
 ```text
-URL: /temporary_guest/temporary-guest-card.js?v=0.3.0
+URL: /temporary_guest/temporary-guest-card.js?v=0.3.1
 类型: JavaScript 模块
 ```
 
@@ -98,20 +121,23 @@ reveal_seconds: 30
 1. 打开 **设置 → 仪表盘 → 添加仪表盘**，建立“访客面板”，不要勾选“仅管理员”；其 URL 路径要与集成里的“访客仪表盘路径”一致。
 2. 只加入白名单实体对应的卡片；访客首页不要设为子视图，二级页面才启用“子视图”。
 3. 登录一次 `mzuser` 验证：目标路径及其子路径应正常打开，访问其他 Lovelace 仪表盘会自动回到访客面板。
-4. 可在个人资料中把访客面板设为默认仪表盘。若已安装 HACS Kiosk Mode，把下面配置加入访客仪表盘的原始配置：全局开关继续控制其他用户，而受管访客始终隐藏顶栏和侧边栏。
+4. 可在个人资料中把访客面板设为默认仪表盘。若已安装 HACS Kiosk Mode，把下面配置加入访客仪表盘的原始配置：全局开关继续控制其他用户，而受管访客忽略该开关并始终进入 Kiosk Mode。
 
 ```yaml
 kiosk_mode:
-  hide_header: '{{ is_state("input_boolean.quan_ping_kai_guan", "on") }}'
-  hide_sidebar: '{{ is_state("input_boolean.quan_ping_kai_guan", "on") }}'
+  entity_settings:
+    - entity:
+        input_boolean.quan_ping_kai_guan: "on"
+      hide_header: true
+      hide_sidebar: true
   user_settings:
     - users:
         - 临时访客
-      hide_header: true
-      hide_sidebar: true
+      kiosk: true
+      ignore_entity_settings: true
 ```
 
-Kiosk Mode 的 `users` 按 Home Assistant 用户的显示名称匹配；上例使用本集成默认显示名“临时访客”。如果配置集成时改过显示名，这里也要改成完全相同的名称。`user_settings` 只覆盖该用户，不会改动 `input_boolean.quan_ping_kai_guan` 的状态或其他用户的全局显示规则。
+Kiosk Mode 的 `users` 按 Home Assistant 用户的显示名称匹配；上例使用本集成默认显示名“临时访客”。如果配置集成时改过显示名，这里也要改成完全相同的名称。`ignore_entity_settings: true` 让该用户不读取全局实体开关，`kiosk: true` 则固定隐藏顶栏和侧边栏。其他用户仍由 `input_boolean.quan_ping_kai_guan` 控制。
 
 视图可见性和 Kiosk Mode 都只负责界面整理，真正的实体安全边界仍是本集成写入的服务端白名单。
 
@@ -130,6 +156,12 @@ WebSocket 命令（服务端按当前会话身份判断）
 ```
 
 每天的刷新由集成在 Home Assistant 进程内调度，不要求管理页面保持打开。时间使用 Home Assistant 配置的本地时区。
+
+## 从 0.3.0 升级
+
+替换集成文件并完整重启 Home Assistant，然后让访客重新登录。Lovelace 资源 URL 可同步改为 `?v=0.3.1`。日志保护在服务端生效，单独替换前端资源或刷新浏览器不能修复旧服务端。
+
+访客面板中的活动日志、任意模板、统计/能源和全局媒体库功能将不可用。实体状态、普通历史和使用显式实体目标的已授权控制继续提供。注册表元数据也已加入服务端裁剪；升级后应检查访客卡片是否依赖被收紧的接口。
 
 ## 从 0.2.0 升级
 
@@ -168,7 +200,10 @@ node --test tests/frontend_guard.test.mjs
 - `AuthManager.async_remove_refresh_token(refresh_token)`；
 - `AuthStore._groups`、`AuthStore._async_schedule_save()` 与认证 Store 的即时持久化（HA 目前没有公开的自定义组创建接口）；
 - `User.refresh_tokens`；
-- `websocket_api.ActiveConnection.user.is_owner`。
+- `websocket_api.ActiveConnection.user.is_owner`；
+- `logbook.rest_api`、`logbook.websocket_api` 共用的 `EventProcessor.__init__`，以及 HA 的 `current_request` / `current_connection` 认证任务上下文；
+- WebSocket 认证注册的 token 撤销回调，用于关闭升级前的会话与订阅。
+- `ActiveConnection.async_handle`、`HomeAssistantView.register` 和 aiohttp 路由 `_handler`；这些边界覆盖已注册和延迟注册的接口，随 HA 升级必须回归测试。
 
 ## 已知限制
 
@@ -176,7 +211,9 @@ node --test tests/frontend_guard.test.mjs
 - 只管理一个专用临时用户；
 - 不能接管已有用户名，以避免误改真实账户；
 - Dashboard 自动跳转依赖前端 JavaScript，可被关闭、篡改或缓存页面绕过，不是服务端页面 ACL；
-- 实体白名单保护实体读取和控制，但不能完整隔离非实体元数据；
+- 实体白名单及接口防护覆盖本版已核验路径，不能完整隔离所有第三方集成的非实体元数据；
+- 活动日志已对受管访客整体禁用，尚不提供按白名单安全裁剪日志的功能；
+- 日志保护依赖 HA 2026.10.1 的内部公共处理路径；依赖升级后应重跑真实处理器测试，不能只看方法签名；
 - 自定义权限组需要使用 HA 2026.10.1 的内部认证存储接口；接口不兼容时集成会停用账号并拒绝加载，而不是退回普通用户的全实体权限；
 - 因此升级 HA 大版本前必须等待本集成适配并测试，不能忽略版本锁定；
 - 密码更新成功但私有存储写入失败时，集成会尝试回滚旧密码并报告失败。

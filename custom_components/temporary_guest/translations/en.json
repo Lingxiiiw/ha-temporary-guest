@@ -1,0 +1,40 @@
+{
+  "title": "Temporary Guest",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Create a managed temporary user",
+        "description": "This creates a dedicated non-admin Home Assistant user. Only the Owner can reveal or change its password from the card.",
+        "data": {
+          "username": "Login username",
+          "display_name": "Display name",
+          "local_only": "Allow login from local network only",
+          "auto_rotate": "Automatically rotate password every day",
+          "rotation_time": "Daily rotation time",
+          "password_length": "Generated password length"
+        }
+      }
+    },
+    "error": {
+      "invalid_username": "Enter a non-empty username",
+      "username_exists": "This Home Assistant username already exists"
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Temporary Guest instance is supported",
+      "already_configured": "This username is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Temporary Guest options",
+        "data": {
+          "auto_rotate": "Automatically rotate password every day",
+          "rotation_time": "Daily rotation time",
+          "password_length": "Generated password length"
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,40 @@
+{
+  "title": "临时用户",
+  "config": {
+    "step": {
+      "user": {
+        "title": "创建受管理的临时用户",
+        "description": "集成会创建一个专用的非管理员 Home Assistant 用户。只有所有者（Owner）能通过卡片显示或修改其密码。",
+        "data": {
+          "username": "登录用户名",
+          "display_name": "显示名称",
+          "local_only": "只允许从本地网络登录",
+          "auto_rotate": "每天自动刷新密码",
+          "rotation_time": "每日刷新时间",
+          "password_length": "生成密码的长度"
+        }
+      }
+    },
+    "error": {
+      "invalid_username": "请输入非空用户名",
+      "username_exists": "该 Home Assistant 用户名已经存在"
+    },
+    "abort": {
+      "single_instance_allowed": "只能配置一个临时用户实例",
+      "already_configured": "该用户名已经配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "临时用户选项",
+        "data": {
+          "auto_rotate": "每天自动刷新密码",
+          "rotation_time": "每日刷新时间",
+          "password_length": "生成密码的长度"
+        }
+      }
+    }
+  }
+}
+

@@ -37,7 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Apply changed schedule and entity-permission options."""
+    """Apply changed schedule, entity permissions, and dynamic UI policy."""
     manager: TemporaryGuestManager = entry.runtime_data
     await manager.async_sync_permissions()
     manager.async_reschedule()

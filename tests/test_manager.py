@@ -12,6 +12,7 @@ from custom_components.temporary_guest.const import (
     CONF_AUTO_ROTATE,
     CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
+    CONF_GUEST_DASHBOARD_PATH,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
     CONF_READ_ENTITIES,
@@ -170,6 +171,7 @@ def _build_manager():
             CONF_PASSWORD_LENGTH: 24,
             CONF_READ_ENTITIES: [],
             CONF_CONTROL_ENTITIES: [],
+            CONF_GUEST_DASHBOARD_PATH: "/dashboard-mzuser",
         },
         entry_id="test-entry",
     )
@@ -292,3 +294,21 @@ def test_websocket_requires_owner() -> None:
     )
     with pytest.raises(Unauthorized):
         _require_owner(connection, {"id": 1})
+
+
+def test_ui_policy_is_limited_to_the_managed_user() -> None:
+    """Only the authenticated managed user receives a Dashboard path."""
+    manager, user, _auth, _store, _token = _build_manager()
+
+    assert manager.ui_policy_for_user(user.id) == {
+        "managed": True,
+        "dashboard_path": "/dashboard-mzuser",
+    }
+    assert manager.ui_policy_for_user("another-user") == {
+        "managed": False,
+        "dashboard_path": None,
+    }
+    assert manager.ui_policy_for_user(None) == {
+        "managed": False,
+        "dashboard_path": None,
+    }

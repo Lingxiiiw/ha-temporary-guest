@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Create a managed temporary user",
-        "description": "This creates a dedicated non-admin Home Assistant user with a deny-by-default entity whitelist. An empty whitelist grants no entity access. Only the Owner can reveal or change its password from the card.",
+        "description": "This creates a dedicated non-admin Home Assistant user with a deny-by-default entity whitelist and a browser Dashboard guard. An empty whitelist grants no entity access. Only the Owner can reveal or change its password from the card.",
         "data": {
           "username": "Login username",
           "display_name": "Display name",
@@ -12,10 +12,12 @@
           "auto_rotate": "Automatically rotate password every day",
           "rotation_time": "Daily rotation time",
           "password_length": "Generated password length",
+          "guest_dashboard_path": "Guest Dashboard path",
           "read_entities": "Read-only entities",
           "control_entities": "Readable and controllable entities"
         },
         "data_description": {
+          "guest_dashboard_path": "The guest is redirected to this local Dashboard path, for example /dashboard-mzuser. This is a browser guard, not a server-side page permission.",
           "read_entities": "The guest can see these entity states but cannot control them.",
           "control_entities": "The guest can see and control these entities. This selection overrides read-only when an entity appears in both lists."
         }
@@ -23,6 +25,7 @@
     },
     "error": {
       "invalid_username": "Enter a non-empty username",
+      "invalid_dashboard_path": "Enter a local absolute path such as /dashboard-mzuser, without an origin, query, fragment, spaces, dot segments, or //",
       "username_exists": "This Home Assistant username already exists"
     },
     "abort": {
@@ -33,20 +36,25 @@
   "options": {
     "step": {
       "init": {
-        "title": "Temporary Guest schedule and entity access",
-        "description": "Changing either entity list immediately revokes the guest's sessions and applies a server-side deny-by-default policy. Empty lists grant no entity access.",
+        "title": "Temporary Guest schedule, Dashboard, and entity access",
+        "description": "Changing either entity list immediately revokes the guest's sessions and applies a server-side deny-by-default policy. The Dashboard path changes on the guest's next navigation. Empty entity lists grant no entity access.",
         "data": {
           "auto_rotate": "Automatically rotate password every day",
           "rotation_time": "Daily rotation time",
           "password_length": "Generated password length",
+          "guest_dashboard_path": "Guest Dashboard path",
           "read_entities": "Read-only entities",
           "control_entities": "Readable and controllable entities"
         },
         "data_description": {
+          "guest_dashboard_path": "The guest is redirected to this local Dashboard path and its child paths. The change is picked up on the next navigation.",
           "read_entities": "The guest can see these entity states but cannot control them.",
           "control_entities": "The guest can see and control these entities. This selection overrides read-only when an entity appears in both lists."
         }
       }
+    },
+    "error": {
+      "invalid_dashboard_path": "Enter a local absolute path such as /dashboard-mzuser, without an origin, query, fragment, spaces, dot segments, or //"
     }
   }
 }

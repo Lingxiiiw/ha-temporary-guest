@@ -14,6 +14,7 @@ CONF_ROTATION_TIME: Final = "rotation_time"
 CONF_PASSWORD_LENGTH: Final = "password_length"
 CONF_READ_ENTITIES: Final = "read_entities"
 CONF_CONTROL_ENTITIES: Final = "control_entities"
+CONF_GUEST_DASHBOARD_PATH: Final = "guest_dashboard_path"
 
 DEFAULT_USERNAME: Final = "mzuser"
 DEFAULT_DISPLAY_NAME: Final = "临时访客"
@@ -23,6 +24,7 @@ DEFAULT_ROTATION_TIME: Final = "08:00:00"
 DEFAULT_PASSWORD_LENGTH: Final = 24
 DEFAULT_READ_ENTITIES: Final[tuple[str, ...]] = ()
 DEFAULT_CONTROL_ENTITIES: Final[tuple[str, ...]] = ()
+DEFAULT_GUEST_DASHBOARD_PATH: Final = "/dashboard-mzuser"
 MIN_PASSWORD_LENGTH: Final = 16
 MAX_PASSWORD_LENGTH: Final = 64
 
@@ -40,3 +42,4 @@ WS_REVEAL: Final = "temporary_guest/reveal"
 WS_ROTATE: Final = "temporary_guest/rotate"
 WS_SET_ACTIVE: Final = "temporary_guest/set_active"
 WS_SET_AUTO_ROTATE: Final = "temporary_guest/set_auto_rotate"
+WS_UI_POLICY: Final = "temporary_guest/ui_policy"

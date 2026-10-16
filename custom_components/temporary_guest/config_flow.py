@@ -26,6 +26,7 @@ from .const import (
     CONF_AUTO_ROTATE,
     CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
+    CONF_GUEST_DASHBOARD_PATH,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
     CONF_READ_ENTITIES,
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_AUTO_ROTATE,
     DEFAULT_CONTROL_ENTITIES,
     DEFAULT_DISPLAY_NAME,
+    DEFAULT_GUEST_DASHBOARD_PATH,
     DEFAULT_LOCAL_ONLY,
     DEFAULT_PASSWORD_LENGTH,
     DEFAULT_READ_ENTITIES,
@@ -43,6 +45,7 @@ from .const import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
 )
+from .dashboard import normalize_dashboard_path
 
 
 async def _async_username_exists(hass, username: str) -> bool:
@@ -81,11 +84,17 @@ class TemporaryGuestConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             username = str(user_input[CONF_USERNAME]).strip().casefold()
+            try:
+                dashboard_path = normalize_dashboard_path(
+                    user_input[CONF_GUEST_DASHBOARD_PATH]
+                )
+            except ValueError:
+                errors[CONF_GUEST_DASHBOARD_PATH] = "invalid_dashboard_path"
             if not username:
                 errors[CONF_USERNAME] = "invalid_username"
             elif await _async_username_exists(self.hass, username):
                 errors[CONF_USERNAME] = "username_exists"
-            else:
+            if not errors:
                 await self.async_set_unique_id(username)
                 self._abort_if_unique_id_configured()
                 password_length = int(user_input[CONF_PASSWORD_LENGTH])
@@ -99,6 +108,7 @@ class TemporaryGuestConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_ROTATE: bool(user_input[CONF_AUTO_ROTATE]),
                     CONF_ROTATION_TIME: str(user_input[CONF_ROTATION_TIME]),
                     CONF_PASSWORD_LENGTH: password_length,
+                    CONF_GUEST_DASHBOARD_PATH: dashboard_path,
                     **_entity_permission_options(user_input),
                 }
                 return self.async_create_entry(
@@ -130,6 +140,10 @@ class TemporaryGuestConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 ),
                 probatio.Required(
+                    CONF_GUEST_DASHBOARD_PATH,
+                    default=DEFAULT_GUEST_DASHBOARD_PATH,
+                ): TextSelector(),
+                probatio.Required(
                     CONF_READ_ENTITIES, default=list(DEFAULT_READ_ENTITIES)
                 ): EntitySelector(EntitySelectorConfig(multiple=True)),
                 probatio.Required(
@@ -152,16 +166,25 @@ class TemporaryGuestOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit the schedule and generated password length."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_AUTO_ROTATE: bool(user_input[CONF_AUTO_ROTATE]),
-                    CONF_ROTATION_TIME: str(user_input[CONF_ROTATION_TIME]),
-                    CONF_PASSWORD_LENGTH: int(user_input[CONF_PASSWORD_LENGTH]),
-                    **_entity_permission_options(user_input),
-                },
-            )
+            try:
+                dashboard_path = normalize_dashboard_path(
+                    user_input[CONF_GUEST_DASHBOARD_PATH]
+                )
+            except ValueError:
+                errors[CONF_GUEST_DASHBOARD_PATH] = "invalid_dashboard_path"
+            else:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_AUTO_ROTATE: bool(user_input[CONF_AUTO_ROTATE]),
+                        CONF_ROTATION_TIME: str(user_input[CONF_ROTATION_TIME]),
+                        CONF_PASSWORD_LENGTH: int(user_input[CONF_PASSWORD_LENGTH]),
+                        CONF_GUEST_DASHBOARD_PATH: dashboard_path,
+                        **_entity_permission_options(user_input),
+                    },
+                )
 
         options = self._entry.options
         schema = probatio.Schema(
@@ -185,6 +208,17 @@ class TemporaryGuestOptionsFlow(OptionsFlow):
                     )
                 ),
                 probatio.Required(
+                    CONF_GUEST_DASHBOARD_PATH,
+                    default=(
+                        user_input[CONF_GUEST_DASHBOARD_PATH]
+                        if user_input is not None
+                        else options.get(
+                            CONF_GUEST_DASHBOARD_PATH,
+                            DEFAULT_GUEST_DASHBOARD_PATH,
+                        )
+                    ),
+                ): TextSelector(),
+                probatio.Required(
                     CONF_READ_ENTITIES,
                     default=options.get(CONF_READ_ENTITIES, list(DEFAULT_READ_ENTITIES)),
                 ): EntitySelector(EntitySelectorConfig(multiple=True)),
@@ -196,7 +230,7 @@ class TemporaryGuestOptionsFlow(OptionsFlow):
                 ): EntitySelector(EntitySelectorConfig(multiple=True)),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
 
 
 def _entity_permission_options(user_input: dict[str, Any]) -> dict[str, list[str]]:

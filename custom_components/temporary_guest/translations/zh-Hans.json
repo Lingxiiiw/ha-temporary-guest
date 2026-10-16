@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "创建受管理的临时用户",
-        "description": "集成会创建一个默认拒绝所有实体的专用非管理员用户。实体白名单留空时，该用户不能访问任何实体。只有所有者（Owner）能通过卡片显示或修改其密码。",
+        "description": "集成会创建一个默认拒绝所有实体的专用非管理员用户，并启用浏览器 Dashboard 守卫。实体白名单留空时，该用户不能访问任何实体。只有所有者（Owner）能通过卡片显示或修改其密码。",
         "data": {
           "username": "登录用户名",
           "display_name": "显示名称",
@@ -12,10 +12,12 @@
           "auto_rotate": "每天自动刷新密码",
           "rotation_time": "每日刷新时间",
           "password_length": "生成密码的长度",
+          "guest_dashboard_path": "访客仪表盘路径",
           "read_entities": "仅可查看的实体",
           "control_entities": "可查看并控制的实体"
         },
         "data_description": {
+          "guest_dashboard_path": "访客会被自动带回这个本地仪表盘路径，例如 /dashboard-mzuser。这是浏览器界面守卫，不是服务端页面权限。",
           "read_entities": "临时用户可以看到这些实体的状态，但不能控制它们。",
           "control_entities": "临时用户可以看到并控制这些实体；同一实体同时出现在两组时，以可控制为准。"
         }
@@ -23,6 +25,7 @@
     },
     "error": {
       "invalid_username": "请输入非空用户名",
+      "invalid_dashboard_path": "请输入类似 /dashboard-mzuser 的本地绝对路径，不能包含协议、域名、查询参数、片段、空格、点路径或 //",
       "username_exists": "该 Home Assistant 用户名已经存在"
     },
     "abort": {
@@ -33,20 +36,25 @@
   "options": {
     "step": {
       "init": {
-        "title": "临时用户定时与实体权限",
-        "description": "修改任一实体清单后会立即注销临时用户的已有会话，并应用服务端默认拒绝策略。两个清单都留空时不能访问任何实体。",
+        "title": "临时用户定时、仪表盘与实体权限",
+        "description": "修改任一实体清单后会立即注销临时用户的已有会话，并应用服务端默认拒绝策略。仪表盘路径会在访客下次导航时生效。两个实体清单都留空时不能访问任何实体。",
         "data": {
           "auto_rotate": "每天自动刷新密码",
           "rotation_time": "每日刷新时间",
           "password_length": "生成密码的长度",
+          "guest_dashboard_path": "访客仪表盘路径",
           "read_entities": "仅可查看的实体",
           "control_entities": "可查看并控制的实体"
         },
         "data_description": {
+          "guest_dashboard_path": "访客会被自动带回这个仪表盘及其子路径；修改后会在访客下次导航时生效。",
           "read_entities": "临时用户可以看到这些实体的状态，但不能控制它们。",
           "control_entities": "临时用户可以看到并控制这些实体；同一实体同时出现在两组时，以可控制为准。"
         }
       }
+    },
+    "error": {
+      "invalid_dashboard_path": "请输入类似 /dashboard-mzuser 的本地绝对路径，不能包含协议、域名、查询参数、片段、空格、点路径或 //"
     }
   }
 }

@@ -20,6 +20,7 @@ from .const import (
     CONF_AUTO_ROTATE,
     CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
+    CONF_GUEST_DASHBOARD_PATH,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
     CONF_READ_ENTITIES,
@@ -27,6 +28,7 @@ from .const import (
     CONF_USERNAME,
     DEFAULT_AUTO_ROTATE,
     DEFAULT_CONTROL_ENTITIES,
+    DEFAULT_GUEST_DASHBOARD_PATH,
     DEFAULT_PASSWORD_LENGTH,
     DEFAULT_READ_ENTITIES,
     DEFAULT_ROTATION_TIME,
@@ -34,6 +36,7 @@ from .const import (
     STORAGE_KEY_PREFIX,
     STORAGE_VERSION,
 )
+from .dashboard import normalize_dashboard_path
 from .password import generate_password
 from .permissions import (
     async_ensure_restricted_group,
@@ -110,8 +113,30 @@ class TemporaryGuestManager:
             self.entry.options.get(CONF_CONTROL_ENTITIES, DEFAULT_CONTROL_ENTITIES)
         )
 
+    @property
+    def guest_dashboard_path(self) -> str:
+        """Return the normalized Dashboard base path for the managed user."""
+        try:
+            return normalize_dashboard_path(
+                self.entry.options.get(
+                    CONF_GUEST_DASHBOARD_PATH, DEFAULT_GUEST_DASHBOARD_PATH
+                )
+            )
+        except ValueError as err:
+            raise ConfigEntryError("Invalid Temporary Guest Dashboard path") from err
+
+    def ui_policy_for_user(self, user_id: str | None) -> dict[str, Any]:
+        """Return the UI policy derived only from the authenticated user id."""
+        managed = isinstance(user_id, str) and user_id == self._state.get("user_id")
+        return {
+            "managed": managed,
+            "dashboard_path": self.guest_dashboard_path if managed else None,
+        }
+
     async def async_initialize(self) -> None:
         """Load state, create the managed user on first run, and start timer."""
+        # Fail the config entry early if its stored UI policy was tampered with.
+        _ = self.guest_dashboard_path
         loaded = await self._store.async_load()
         self._state = dict(loaded or {})
 

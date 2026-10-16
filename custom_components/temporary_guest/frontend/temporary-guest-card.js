@@ -1,4 +1,103 @@
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.3.0";
+const UI_POLICY_TYPE = "temporary_guest/ui_policy";
+const DASHBOARD_GUARD_KEY = "__temporaryGuestDashboardGuard";
+const DASHBOARD_PATH_PATTERN = /^\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)*$/;
+
+function dashboardPathAllowed(pathname, dashboardPath) {
+  return pathname === dashboardPath || pathname.startsWith(`${dashboardPath}/`);
+}
+
+class TemporaryGuestDashboardGuard {
+  constructor() {
+    this._policy = null;
+    this._request = null;
+    this._retryTimer = null;
+    this._listening = false;
+    this._onLocationChanged = () => void this._refreshAndEnforce();
+  }
+
+  start() {
+    void this._refreshAndEnforce();
+  }
+
+  _homeAssistant() {
+    return document.querySelector("home-assistant")?.hass;
+  }
+
+  _scheduleRetry() {
+    if (this._retryTimer !== null) return;
+    this._retryTimer = window.setTimeout(() => {
+      this._retryTimer = null;
+      void this._refreshAndEnforce();
+    }, 1000);
+  }
+
+  _setListening(enabled) {
+    if (enabled === this._listening) return;
+    const action = enabled ? "addEventListener" : "removeEventListener";
+    window[action]("location-changed", this._onLocationChanged);
+    window[action]("popstate", this._onLocationChanged);
+    this._listening = enabled;
+  }
+
+  async _refreshAndEnforce() {
+    const hass = this._homeAssistant();
+    if (!hass?.user?.id || typeof hass.callWS !== "function") {
+      this._scheduleRetry();
+      return;
+    }
+
+    if (this._request !== null) {
+      await this._request;
+      this._enforce();
+      return;
+    }
+
+    const userId = String(hass.user.id);
+    this._request = hass
+      .callWS({ type: UI_POLICY_TYPE })
+      .then((result) => {
+        const currentHass = this._homeAssistant();
+        if (String(currentHass?.user?.id || "") !== userId) return;
+        const dashboardPath = result?.dashboard_path;
+        const managed =
+          result?.managed === true &&
+          typeof dashboardPath === "string" &&
+          DASHBOARD_PATH_PATTERN.test(dashboardPath);
+        this._policy = managed ? { managed: true, dashboardPath } : null;
+        this._setListening(managed);
+      })
+      .catch(() => {
+        this._policy = null;
+        this._setListening(false);
+        this._scheduleRetry();
+      })
+      .finally(() => {
+        this._request = null;
+      });
+
+    await this._request;
+    this._enforce();
+  }
+
+  _enforce() {
+    const dashboardPath = this._policy?.dashboardPath;
+    if (!dashboardPath || dashboardPathAllowed(window.location.pathname, dashboardPath)) {
+      return;
+    }
+    window.history.replaceState(null, "", dashboardPath);
+    window.dispatchEvent(
+      new CustomEvent("location-changed", { detail: { replace: true } }),
+    );
+  }
+}
+
+if (window[DASHBOARD_GUARD_KEY]?.start) {
+  window[DASHBOARD_GUARD_KEY].start();
+} else {
+  window[DASHBOARD_GUARD_KEY] = new TemporaryGuestDashboardGuard();
+  window[DASHBOARD_GUARD_KEY].start();
+}
 
 class TemporaryGuestCard extends HTMLElement {
   constructor() {

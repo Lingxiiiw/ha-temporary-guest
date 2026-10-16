@@ -1,4 +1,4 @@
-"""Owner-only WebSocket API for the Temporary Guest card."""
+"""WebSocket API for Temporary Guest management and UI policy."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from .const import (
     WS_SET_ACTIVE,
     WS_SET_AUTO_ROTATE,
     WS_STATUS,
+    WS_UI_POLICY,
 )
 from .manager import TemporaryGuestError, TemporaryGuestManager
 
@@ -32,6 +33,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_rotate)
     websocket_api.async_register_command(hass, websocket_set_active)
     websocket_api.async_register_command(hass, websocket_set_auto_rotate)
+    websocket_api.async_register_command(hass, websocket_ui_policy)
 
 
 def _require_owner(
@@ -45,6 +47,17 @@ def _require_owner(
 def _manager(hass: HomeAssistant) -> TemporaryGuestManager | None:
     """Return the single configured manager."""
     return hass.data.get(DOMAIN, {}).get(DATA_MANAGER)
+
+
+def _ui_policy_for_connection(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection
+) -> dict[str, Any]:
+    """Build a policy without trusting any caller-supplied identity."""
+    manager = _manager(hass)
+    user_id = connection.user.id if connection.user is not None else None
+    if manager is None:
+        return {"managed": False, "dashboard_path": None}
+    return manager.ui_policy_for_user(user_id)
 
 
 async def _async_result(
@@ -164,3 +177,19 @@ async def websocket_set_auto_rotate(
         return await manager.async_status()
 
     await _async_result(hass, connection, msg, operation)
+
+
+@websocket_api.websocket_command({probatio.Required("type"): WS_UI_POLICY})
+@websocket_api.async_response
+async def websocket_ui_policy(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the current connection's non-sensitive Dashboard policy."""
+    if _manager(hass) is None:
+        connection.send_error(
+            msg["id"], "not_configured", "Integration is not configured"
+        )
+        return
+    connection.send_result(msg["id"], _ui_policy_for_connection(hass, connection))

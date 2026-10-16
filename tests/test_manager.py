@@ -5,20 +5,26 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.exceptions import Unauthorized
+from homeassistant.auth.models import Group
+from homeassistant.exceptions import ConfigEntryError, Unauthorized
 
 from custom_components.temporary_guest.const import (
     CONF_AUTO_ROTATE,
+    CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
+    CONF_READ_ENTITIES,
     CONF_ROTATION_TIME,
     CONF_USERNAME,
+    RESTRICTED_GROUP_ID,
+    RESTRICTED_GROUP_NAME,
 )
 from custom_components.temporary_guest.manager import (
     TemporaryGuestError,
     TemporaryGuestManager,
 )
+from custom_components.temporary_guest.permissions import build_entity_policy
 from custom_components.temporary_guest.websocket import _require_owner
 
 
@@ -62,11 +68,48 @@ class FakeProvider:
             raise InvalidAuth
 
 
+class FakeAuthDisk:
+    """Capture immediate auth-store persistence."""
+
+    def __init__(self) -> None:
+        self.saved = []
+
+    async def async_save(self, value) -> None:
+        """Record a persisted auth snapshot."""
+        self.saved.append(deepcopy(value))
+
+
+class FakeAuthStore:
+    """Provide the pinned private auth-store surface used by the integration."""
+
+    def __init__(self, group: Group) -> None:
+        self._groups = {group.id: group}
+        self._store = FakeAuthDisk()
+        self.scheduled_saves = 0
+
+    def _async_schedule_save(self) -> None:
+        self.scheduled_saves += 1
+
+    def _data_to_save(self):
+        return {
+            "groups": {
+                group_id: deepcopy(group.policy)
+                for group_id, group in self._groups.items()
+            }
+        }
+
+
 def _build_manager():
     """Build a manager around small auth/config fakes."""
     token = object()
     credential = SimpleNamespace(
         auth_provider_type="homeassistant", data={"username": "mzuser"}
+    )
+    restricted_group = Group(
+        name=RESTRICTED_GROUP_NAME,
+        policy=build_entity_policy([], []),
+        id=RESTRICTED_GROUP_ID,
+        system_generated=False,
     )
     user = SimpleNamespace(
         id="mzuser-user-id",
@@ -76,6 +119,7 @@ def _build_manager():
         system_generated=False,
         is_active=True,
         local_only=False,
+        groups=[restricted_group],
         credentials=[credential],
         refresh_tokens={"session": token},
     )
@@ -84,17 +128,35 @@ def _build_manager():
         def __init__(self) -> None:
             self.removed_tokens = []
             self.updates = []
+            self._store = FakeAuthStore(restricted_group)
 
         async def async_get_user(self, user_id: str):
             return user if user_id == user.id else None
 
+        async def async_get_users(self):
+            return [user]
+
+        async def async_get_group(self, group_id: str):
+            return self._store._groups.get(group_id)
+
         def async_remove_refresh_token(self, refresh_token) -> None:
             self.removed_tokens.append(refresh_token)
+            for token_id, value in list(user.refresh_tokens.items()):
+                if value is refresh_token:
+                    user.refresh_tokens.pop(token_id)
 
         async def async_update_user(self, changed_user, **changes) -> None:
             self.updates.append((changed_user, changes))
             if "is_active" in changes:
                 changed_user.is_active = changes["is_active"]
+                if changes["is_active"] is False:
+                    for refresh_token in list(changed_user.refresh_tokens.values()):
+                        self.async_remove_refresh_token(refresh_token)
+            if "group_ids" in changes:
+                changed_user.groups = [
+                    self._store._groups[group_id]
+                    for group_id in changes["group_ids"]
+                ]
 
     entry = SimpleNamespace(
         data={
@@ -106,6 +168,8 @@ def _build_manager():
             CONF_AUTO_ROTATE: True,
             CONF_ROTATION_TIME: "08:00:00",
             CONF_PASSWORD_LENGTH: 24,
+            CONF_READ_ENTITIES: [],
+            CONF_CONTROL_ENTITIES: [],
         },
         entry_id="test-entry",
     )
@@ -169,6 +233,56 @@ async def test_disable_uses_auth_manager() -> None:
     await manager.async_set_active(False)
     assert user.is_active is False
     assert auth.updates == [(user, {"is_active": False})]
+
+
+@pytest.mark.asyncio
+async def test_sync_permissions_replaces_the_all_entity_user_group() -> None:
+    """Migration removes the normal all-entity group before restoring access."""
+    manager, user, auth, _store, token = _build_manager()
+    manager.entry.options[CONF_READ_ENTITIES] = ["sensor.guest_temperature"]
+    manager.entry.options[CONF_CONTROL_ENTITIES] = ["light.guest_room"]
+    user.groups = [
+        Group(
+            name="Users",
+            policy={"entities": True},
+            id="system-users",
+            system_generated=True,
+        )
+    ]
+
+    await manager.async_sync_permissions()
+
+    assert user.is_active is True
+    assert [group.id for group in user.groups] == [RESTRICTED_GROUP_ID]
+    assert user.groups[0].policy == build_entity_policy(
+        ["sensor.guest_temperature"], ["light.guest_room"]
+    )
+    assert auth.removed_tokens == [token]
+    assert [changes for _changed_user, changes in auth.updates] == [
+        {"is_active": False},
+        {"group_ids": [RESTRICTED_GROUP_ID]},
+        {"is_active": True},
+    ]
+    assert len(auth._store._store.saved) == 3
+
+
+@pytest.mark.asyncio
+async def test_permission_group_collision_disables_managed_user() -> None:
+    """Another user in the dedicated group makes the managed account fail closed."""
+    manager, user, auth, _store, _token = _build_manager()
+    foreign_user = SimpleNamespace(
+        id="foreign-user", groups=[auth._store._groups[RESTRICTED_GROUP_ID]]
+    )
+
+    async def async_get_users():
+        return [user, foreign_user]
+
+    auth.async_get_users = async_get_users
+
+    with pytest.raises(ConfigEntryError, match="permission group is unsafe"):
+        await manager.async_sync_permissions()
+
+    assert user.is_active is False
 
 
 def test_websocket_requires_owner() -> None:

@@ -4,14 +4,20 @@
     "step": {
       "user": {
         "title": "创建受管理的临时用户",
-        "description": "集成会创建一个专用的非管理员 Home Assistant 用户。只有所有者（Owner）能通过卡片显示或修改其密码。",
+        "description": "集成会创建一个默认拒绝所有实体的专用非管理员用户。实体白名单留空时，该用户不能访问任何实体。只有所有者（Owner）能通过卡片显示或修改其密码。",
         "data": {
           "username": "登录用户名",
           "display_name": "显示名称",
           "local_only": "只允许从本地网络登录",
           "auto_rotate": "每天自动刷新密码",
           "rotation_time": "每日刷新时间",
-          "password_length": "生成密码的长度"
+          "password_length": "生成密码的长度",
+          "read_entities": "仅可查看的实体",
+          "control_entities": "可查看并控制的实体"
+        },
+        "data_description": {
+          "read_entities": "临时用户可以看到这些实体的状态，但不能控制它们。",
+          "control_entities": "临时用户可以看到并控制这些实体；同一实体同时出现在两组时，以可控制为准。"
         }
       }
     },
@@ -27,14 +33,20 @@
   "options": {
     "step": {
       "init": {
-        "title": "临时用户选项",
+        "title": "临时用户定时与实体权限",
+        "description": "修改任一实体清单后会立即注销临时用户的已有会话，并应用服务端默认拒绝策略。两个清单都留空时不能访问任何实体。",
         "data": {
           "auto_rotate": "每天自动刷新密码",
           "rotation_time": "每日刷新时间",
-          "password_length": "生成密码的长度"
+          "password_length": "生成密码的长度",
+          "read_entities": "仅可查看的实体",
+          "control_entities": "可查看并控制的实体"
+        },
+        "data_description": {
+          "read_entities": "临时用户可以看到这些实体的状态，但不能控制它们。",
+          "control_entities": "临时用户可以看到并控制这些实体；同一实体同时出现在两组时，以可控制为准。"
         }
       }
     }
   }
 }
-

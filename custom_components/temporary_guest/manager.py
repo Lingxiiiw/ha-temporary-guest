@@ -7,7 +7,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import User
 from homeassistant.auth.providers import homeassistant as auth_ha
 from homeassistant.config_entries import ConfigEntry
@@ -19,18 +18,29 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_AUTO_ROTATE,
+    CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
+    CONF_READ_ENTITIES,
     CONF_ROTATION_TIME,
     CONF_USERNAME,
     DEFAULT_AUTO_ROTATE,
+    DEFAULT_CONTROL_ENTITIES,
     DEFAULT_PASSWORD_LENGTH,
+    DEFAULT_READ_ENTITIES,
     DEFAULT_ROTATION_TIME,
+    RESTRICTED_GROUP_ID,
     STORAGE_KEY_PREFIX,
     STORAGE_VERSION,
 )
 from .password import generate_password
+from .permissions import (
+    async_ensure_restricted_group,
+    async_persist_auth_store,
+    build_entity_policy,
+    permission_configuration_matches,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,6 +96,20 @@ class TemporaryGuestManager:
             self.entry.options.get(CONF_PASSWORD_LENGTH, DEFAULT_PASSWORD_LENGTH)
         )
 
+    @property
+    def read_entities(self) -> list[str]:
+        """Return the configured read-only entity ids."""
+        return _entity_id_option(
+            self.entry.options.get(CONF_READ_ENTITIES, DEFAULT_READ_ENTITIES)
+        )
+
+    @property
+    def control_entities(self) -> list[str]:
+        """Return the configured readable and controllable entity ids."""
+        return _entity_id_option(
+            self.entry.options.get(CONF_CONTROL_ENTITIES, DEFAULT_CONTROL_ENTITIES)
+        )
+
     async def async_initialize(self) -> None:
         """Load state, create the managed user on first run, and start timer."""
         loaded = await self._store.async_load()
@@ -94,6 +118,7 @@ class TemporaryGuestManager:
         if self._state.get("user_id"):
             user = await self._async_require_user()
             self._validate_managed_user(user)
+            await self.async_sync_permissions()
             if not self._state.get("password"):
                 await self.async_rotate()
             elif not await self._async_stored_password_matches(user):
@@ -146,37 +171,47 @@ class TemporaryGuestManager:
 
     async def async_status(self) -> dict[str, Any]:
         """Return non-sensitive status for the owner-only card."""
-        user = await self._async_require_user()
-        self._validate_managed_user(user)
-        return {
-            "username": self.username,
-            "display_name": user.name,
-            "active": user.is_active,
-            "local_only": user.local_only,
-            "auto_rotate": self.auto_rotate,
-            "rotation_time": self.rotation_time,
-            "last_rotated": self._state.get("last_rotated"),
-            "next_rotation": self._next_rotation_iso(),
-            "password_available": bool(self._state.get("password")),
-        }
+        async with self._lock:
+            user = await self._async_require_user()
+            self._validate_managed_user(user)
+            await self._async_apply_permissions(user)
+            control_entities = set(self.control_entities)
+            read_only_entities = set(self.read_entities) - control_entities
+            return {
+                "username": self.username,
+                "display_name": user.name,
+                "active": user.is_active,
+                "local_only": user.local_only,
+                "auto_rotate": self.auto_rotate,
+                "rotation_time": self.rotation_time,
+                "last_rotated": self._state.get("last_rotated"),
+                "next_rotation": self._next_rotation_iso(),
+                "password_available": bool(self._state.get("password")),
+                "read_only_entity_count": len(read_only_entities),
+                "control_entity_count": len(control_entities),
+            }
 
     async def async_reveal_password(self) -> str:
         """Return the current password to an already-authorized Owner caller."""
-        user = await self._async_require_user()
-        password = self._state.get("password")
-        if not isinstance(password, str) or not password:
-            raise TemporaryGuestError("Current password is unavailable")
-        if not await self._async_stored_password_matches(user):
-            raise TemporaryGuestError(
-                "Current password was changed outside Temporary Guest; rotate it now"
-            )
-        return password
+        async with self._lock:
+            user = await self._async_require_user()
+            self._validate_managed_user(user)
+            await self._async_apply_permissions(user)
+            password = self._state.get("password")
+            if not isinstance(password, str) or not password:
+                raise TemporaryGuestError("Current password is unavailable")
+            if not await self._async_stored_password_matches(user):
+                raise TemporaryGuestError(
+                    "Current password was changed outside Temporary Guest; rotate it now"
+                )
+            return password
 
     async def async_rotate(self, automatic_date: str | None = None) -> str:
         """Change the password, revoke all sessions, then persist the new value."""
         async with self._lock:
             user = await self._async_require_user()
             self._validate_managed_user(user)
+            await self._async_apply_permissions(user)
             credential = _homeassistant_credential(user)
             if credential is None:
                 raise TemporaryGuestError("Managed user credentials are missing")
@@ -210,7 +245,17 @@ class TemporaryGuestManager:
         async with self._lock:
             user = await self._async_require_user()
             self._validate_managed_user(user)
+            if active:
+                await self._async_apply_permissions(user)
             await self.hass.auth.async_update_user(user, is_active=active)
+            await async_persist_auth_store(self.hass.auth)
+
+    async def async_sync_permissions(self) -> None:
+        """Apply the current entity whitelist and revoke sessions if it changed."""
+        async with self._lock:
+            user = await self._async_require_user()
+            self._validate_managed_user(user)
+            await self._async_apply_permissions(user)
 
     async def async_set_auto_rotate(self, enabled: bool) -> None:
         """Update the persisted config-entry option."""
@@ -231,6 +276,7 @@ class TemporaryGuestManager:
         if user is not None:
             self._validate_managed_user(user)
             await self.hass.auth.async_update_user(user, is_active=False)
+            await async_persist_auth_store(self.hass.auth)
         await self._store.async_remove()
 
     async def _async_create_managed_user(self) -> None:
@@ -242,9 +288,14 @@ class TemporaryGuestManager:
 
         provider = auth_ha.async_get_provider(self.hass)
         password = generate_password(self.password_length)
+        policy = build_entity_policy(self.read_entities, self.control_entities)
+        await async_ensure_restricted_group(
+            self.hass.auth, policy, managed_user_id=None
+        )
+        await async_persist_auth_store(self.hass.auth)
         user = await self.hass.auth.async_create_user(
             self.display_name,
-            group_ids=[GROUP_ID_USER],
+            group_ids=[RESTRICTED_GROUP_ID],
             local_only=bool(self.entry.data[CONF_LOCAL_ONLY]),
         )
         auth_added = False
@@ -255,6 +306,7 @@ class TemporaryGuestManager:
                 {"username": self.username}
             )
             await self.hass.auth.async_link_user(user, credentials)
+            await async_persist_auth_store(self.hass.auth)
             self._state = {
                 "user_id": user.id,
                 "password": password,
@@ -272,7 +324,56 @@ class TemporaryGuestManager:
                         await provider.async_remove_auth(self.username)
                     except Exception:  # noqa: BLE001 - best-effort rollback
                         pass
+                try:
+                    await async_persist_auth_store(self.hass.auth)
+                except Exception:  # noqa: BLE001 - preserve the creation failure
+                    pass
             raise
+
+    async def _async_apply_permissions(self, user: User) -> None:
+        """Ensure an exclusive deny-by-default group, failing closed on errors."""
+        policy = build_entity_policy(self.read_entities, self.control_entities)
+        group = await self.hass.auth.async_get_group(RESTRICTED_GROUP_ID)
+
+        if permission_configuration_matches(user, group, policy):
+            try:
+                await async_ensure_restricted_group(
+                    self.hass.auth, policy, managed_user_id=user.id
+                )
+            except Exception as err:
+                await self._async_fail_closed(user)
+                raise ConfigEntryError(
+                    "Temporary Guest entity permission group is unsafe"
+                ) from err
+            return
+
+        was_active = user.is_active
+        try:
+            await self.hass.auth.async_update_user(user, is_active=False)
+            await async_persist_auth_store(self.hass.auth)
+            await async_ensure_restricted_group(
+                self.hass.auth, policy, managed_user_id=user.id
+            )
+            await self.hass.auth.async_update_user(
+                user, group_ids=[RESTRICTED_GROUP_ID]
+            )
+            await async_persist_auth_store(self.hass.auth)
+            if was_active:
+                await self.hass.auth.async_update_user(user, is_active=True)
+                await async_persist_auth_store(self.hass.auth)
+        except Exception as err:
+            await self._async_fail_closed(user)
+            raise ConfigEntryError(
+                "Unable to apply the Temporary Guest entity whitelist; account disabled"
+            ) from err
+
+    async def _async_fail_closed(self, user: User) -> None:
+        """Best-effort persistent deactivation after a permission failure."""
+        try:
+            await self.hass.auth.async_update_user(user, is_active=False)
+            await async_persist_auth_store(self.hass.auth)
+        except Exception:
+            _LOGGER.exception("Failed to persistently disable temporary guest")
 
     async def _async_require_user(self) -> User:
         """Return the managed user or fail closed."""
@@ -350,3 +451,16 @@ def _parse_time(value: str) -> tuple[int, int, int]:
     except (TypeError, ValueError) as err:
         raise ConfigEntryError(f"Invalid rotation time: {value}") from err
     return hour, minute, second
+
+
+def _entity_id_option(value: Any) -> list[str]:
+    """Return a safe, deduplicated entity-id list from config-entry options."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return sorted(
+        {
+            entity_id
+            for entity_id in value
+            if isinstance(entity_id, str) and entity_id and "." in entity_id
+        }
+    )

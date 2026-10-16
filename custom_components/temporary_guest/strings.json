@@ -4,14 +4,20 @@
     "step": {
       "user": {
         "title": "Create a managed temporary user",
-        "description": "This creates a dedicated non-admin Home Assistant user. Only the Owner can reveal or change its password from the card.",
+        "description": "This creates a dedicated non-admin Home Assistant user with a deny-by-default entity whitelist. An empty whitelist grants no entity access. Only the Owner can reveal or change its password from the card.",
         "data": {
           "username": "Login username",
           "display_name": "Display name",
           "local_only": "Allow login from local network only",
           "auto_rotate": "Automatically rotate password every day",
           "rotation_time": "Daily rotation time",
-          "password_length": "Generated password length"
+          "password_length": "Generated password length",
+          "read_entities": "Read-only entities",
+          "control_entities": "Readable and controllable entities"
+        },
+        "data_description": {
+          "read_entities": "The guest can see these entity states but cannot control them.",
+          "control_entities": "The guest can see and control these entities. This selection overrides read-only when an entity appears in both lists."
         }
       }
     },
@@ -27,14 +33,20 @@
   "options": {
     "step": {
       "init": {
-        "title": "Temporary Guest options",
+        "title": "Temporary Guest schedule and entity access",
+        "description": "Changing either entity list immediately revokes the guest's sessions and applies a server-side deny-by-default policy. Empty lists grant no entity access.",
         "data": {
           "auto_rotate": "Automatically rotate password every day",
           "rotation_time": "Daily rotation time",
-          "password_length": "Generated password length"
+          "password_length": "Generated password length",
+          "read_entities": "Read-only entities",
+          "control_entities": "Readable and controllable entities"
+        },
+        "data_description": {
+          "read_entities": "The guest can see these entity states but cannot control them.",
+          "control_entities": "The guest can see and control these entities. This selection overrides read-only when an entity appears in both lists."
         }
       }
     }
   }
 }
-

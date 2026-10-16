@@ -1,4 +1,4 @@
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.2.0";
 
 class TemporaryGuestCard extends HTMLElement {
   constructor() {
@@ -244,6 +244,11 @@ class TemporaryGuestCard extends HTMLElement {
             <span>下次刷新</span><span class="value">${this._escape(this._formatDate(status?.next_rotation))}</span>
             <span>刷新时间</span><span class="value">${this._escape(status?.rotation_time || "—")}</span>
             <span>登录范围</span><span class="value">${status?.local_only ? "仅本地网络" : "允许远程"}</span>
+            <span>实体权限</span><span class="value">${
+              status
+                ? `${Number(status.read_only_entity_count || 0)} 个只读 · ${Number(status.control_entity_count || 0)} 个可控制`
+                : "—"
+            }</span>
           </div>
 
           <div class="actions">
@@ -267,7 +272,7 @@ class TemporaryGuestCard extends HTMLElement {
             ${this._notice ? `<span class="notice">${this._escape(this._notice)}</span>` : ""}
             ${this._error ? `<span class="error">${this._escape(this._error)}</span>` : ""}
           </div>
-          <div class="foot">密码显示 ${this._config.reveal_seconds} 秒后会从页面清除。仅 Owner 可调用后端操作。</div>
+          <div class="foot">实体白名单请在“设置 → 设备与服务 → Temporary Guest → 配置”中修改。密码显示 ${this._config.reveal_seconds} 秒后会从页面清除。仅 Owner 可调用后端操作。</div>
         </div>
       </ha-card>
     `;
@@ -291,4 +296,3 @@ if (!customElements.get("temporary-guest-card")) {
   });
   console.info(`%c TEMPORARY-GUEST-CARD %c v${CARD_VERSION} `, "color:white;background:#03a9f4;font-weight:700", "color:#03a9f4;background:white");
 }
-

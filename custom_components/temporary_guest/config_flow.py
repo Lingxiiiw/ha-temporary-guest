@@ -14,6 +14,8 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     TextSelector,
@@ -22,15 +24,19 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_AUTO_ROTATE,
+    CONF_CONTROL_ENTITIES,
     CONF_DISPLAY_NAME,
     CONF_LOCAL_ONLY,
     CONF_PASSWORD_LENGTH,
+    CONF_READ_ENTITIES,
     CONF_ROTATION_TIME,
     CONF_USERNAME,
     DEFAULT_AUTO_ROTATE,
+    DEFAULT_CONTROL_ENTITIES,
     DEFAULT_DISPLAY_NAME,
     DEFAULT_LOCAL_ONLY,
     DEFAULT_PASSWORD_LENGTH,
+    DEFAULT_READ_ENTITIES,
     DEFAULT_ROTATION_TIME,
     DEFAULT_USERNAME,
     DOMAIN,
@@ -93,6 +99,7 @@ class TemporaryGuestConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_ROTATE: bool(user_input[CONF_AUTO_ROTATE]),
                     CONF_ROTATION_TIME: str(user_input[CONF_ROTATION_TIME]),
                     CONF_PASSWORD_LENGTH: password_length,
+                    **_entity_permission_options(user_input),
                 }
                 return self.async_create_entry(
                     title=data[CONF_DISPLAY_NAME], data=data, options=options
@@ -122,6 +129,12 @@ class TemporaryGuestConfigFlow(ConfigFlow, domain=DOMAIN):
                         step=1,
                     )
                 ),
+                probatio.Required(
+                    CONF_READ_ENTITIES, default=list(DEFAULT_READ_ENTITIES)
+                ): EntitySelector(EntitySelectorConfig(multiple=True)),
+                probatio.Required(
+                    CONF_CONTROL_ENTITIES, default=list(DEFAULT_CONTROL_ENTITIES)
+                ): EntitySelector(EntitySelectorConfig(multiple=True)),
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -146,6 +159,7 @@ class TemporaryGuestOptionsFlow(OptionsFlow):
                     CONF_AUTO_ROTATE: bool(user_input[CONF_AUTO_ROTATE]),
                     CONF_ROTATION_TIME: str(user_input[CONF_ROTATION_TIME]),
                     CONF_PASSWORD_LENGTH: int(user_input[CONF_PASSWORD_LENGTH]),
+                    **_entity_permission_options(user_input),
                 },
             )
 
@@ -170,6 +184,28 @@ class TemporaryGuestOptionsFlow(OptionsFlow):
                         step=1,
                     )
                 ),
+                probatio.Required(
+                    CONF_READ_ENTITIES,
+                    default=options.get(CONF_READ_ENTITIES, list(DEFAULT_READ_ENTITIES)),
+                ): EntitySelector(EntitySelectorConfig(multiple=True)),
+                probatio.Required(
+                    CONF_CONTROL_ENTITIES,
+                    default=options.get(
+                        CONF_CONTROL_ENTITIES, list(DEFAULT_CONTROL_ENTITIES)
+                    ),
+                ): EntitySelector(EntitySelectorConfig(multiple=True)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
+
+
+def _entity_permission_options(user_input: dict[str, Any]) -> dict[str, list[str]]:
+    """Normalize selector values and let controllable entities win overlaps."""
+    control = list(dict.fromkeys(user_input[CONF_CONTROL_ENTITIES]))
+    control_set = set(control)
+    read = [
+        entity_id
+        for entity_id in dict.fromkeys(user_input[CONF_READ_ENTITIES])
+        if entity_id not in control_set
+    ]
+    return {CONF_READ_ENTITIES: read, CONF_CONTROL_ENTITIES: control}
